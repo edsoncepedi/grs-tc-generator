@@ -101,7 +101,7 @@ The easiest way to run the project is using Docker Compose. This will set up the
 #### 2. Run the Application
 Execute the following command in the project root:
 ```bash
-docker-compose up --build
+    docker-compose up --build
 ```
 *This will build the Python image, start PostgreSQL, initialize the database schema, and launch the web server.*
 
@@ -111,9 +111,7 @@ docker-compose up --build
   - **Email:** `admin@spacelab.com`
   - **Password:** `admin`
 ---
-#### 4. Exemplos de Telecomandos (JSON)
-
-Examples of Telecommands (JSON)
+#### 4. Examples of Telecommands (JSON)
 
 These examples demonstrate how parameters should be structured when sending commands via a web interface or API.
 
@@ -190,20 +188,20 @@ If you prefer to run the Python application locally (outside Docker) for debuggi
 #### 2. Configure Environment
 Create a `.env` file in the root directory:
 ```bash
-# Connection String: dialect+driver://username:password@host:port/database
-export PG_DATABASE_URL="postgresql+psycopg2://admin:admin@localhost:5432/tc_generator"
+    # Connection String: dialect+driver://username:password@host:port/database
+    export PG_DATABASE_URL="postgresql+psycopg2://admin:admin@localhost:5432/tc_generator"
 ```
 
 #### 3. Install Dependencies
 ```bash
-conda create -n tc_generator_web python=3.11
-conda activate tc_generator_web
-pip install -r requirements.txt
+    conda create -n tc_generator_web python=3.11
+    conda activate tc_generator_web
+    pip install -r requirements.txt
 ```
 
 #### 4. Run the Application
 ```bash
-python run.py
+  python run.py
 ```
 
 ---
@@ -251,18 +249,18 @@ Se preferir rodar a aplicação Python localmente (fora do Docker) para depuraç
 #### 2. Configurar Ambiente
 Crie um arquivo `.env` na raiz ou exporte as variáveis:
 ```bash
-# String de Conexão: dialect+driver://username:password@host:port/database
-export PG_DATABASE_URL="postgresql+psycopg2://admin:admin@localhost:5432/tc_generator"
+    # String de Conexão: dialect+driver://username:password@host:port/database
+    export PG_DATABASE_URL="postgresql+psycopg2://admin:admin@localhost:5432/tc_generator"
 ```
 
 #### 3. Instalar Dependências
 ```bash
-conda create -n tc_generator_web python=3.11
-conda activate tc_generator_web
-pip install -r requirements.txt
+    conda create -n tc_generator_web python=3.11
+    conda activate tc_generator_web
+    pip install -r requirements.txt
 ```
 
 #### 4. Executar a Aplicação
 ```bash
-python run.py
+    python run.py
 ```
