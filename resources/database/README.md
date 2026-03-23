@@ -1,3 +1,122 @@
+[English Version](#english-version) | [Versão em Português](#versão-em-português)
+
+---
+
+## English Version
+
+# Database Configuration
+
+This directory contains the scripts and configurations for the TC Generator's PostgreSQL database.
+
+## Database Structure
+
+The database contains the following main tables:
+
+- `satellites`: Stores information about the satellites
+- `operators`: Stores information about the system operators
+- `telecommands`: Stores the commands sent to the satellites
+- `execution_logs`: Stores execution logs of the commands
+
+## Configuration
+
+1. Ensure PostgreSQL is installed and running
+2. Configure the environment variables in the `.env` file at the root of the project:
+   ```
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_NAME=tc_generator
+   DB_USER=root
+   DB_PASSWORD=root
+   ```
+
+## Database Initialization
+
+To create and populate the database, run the following command:
+
+```bash
+# Make the script executable (only the first time)
+chmod +x database/script_init_db.py
+
+# Run the initialization script
+python database/script_init_db.py
+```
+
+## Accessing the Database
+
+### Using psql (command line)
+
+```bash
+psql -h localhost -U root -d tc_generator
+```
+
+### Using Python
+
+```python
+import psycopg2
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+conn = psycopg2.connect(
+    host=os.getenv('DB_HOST'),
+    port=os.getenv('DB_PORT'),
+    dbname=os.getenv('DB_NAME'),
+    user=os.getenv('DB_USER'),
+    password=os.getenv('DB_PASSWORD')
+)
+
+# Query example
+with conn.cursor() as cur:
+    cur.execute("SELECT * FROM satellites")
+    for row in cur.fetchall():
+        print(row)
+
+conn.close()
+```
+
+## Useful Views
+
+The database includes the following views:
+
+- `vw_recent_telecommands`: Shows recent commands with satellite and operator information
+
+## Useful Functions
+
+- `get_satellite_command_stats(days_interval)`: Returns command statistics per satellite
+
+## Migrations
+
+To make changes to the database schema, follow these steps:
+
+1. Create a new migration file in `database/migrations/` with the format `YYYYMMDD_migration_name.sql`
+2. Add the necessary SQL commands for the migration
+3. Update the main schema (`schema.sql`) with the changes
+
+## Backup and Restore
+
+### Backup
+
+```bash
+pg_dump -h localhost -U root -d tc_generator > backup_$(date +%Y%m%d).sql
+```
+
+### Restore
+
+```bash
+psql -h localhost -U root -d tc_generator < backup_20231119.sql
+```
+
+## Troubleshooting
+
+- **Connection error**: Check if PostgreSQL is running and if the credentials in the `.env` are correct
+- **Permission denied**: Ensure the database user has the necessary permissions
+- **Foreign key error**: Verify if data is being inserted in the correct order (referenced tables first)
+
+---
+
+## Versão em Português
+
 # Configuração do Banco de Dados
 
 Este diretório contém os scripts e configurações para o banco de dados PostgreSQL do TC Generator.
