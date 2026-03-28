@@ -20,6 +20,10 @@ This module is part of the **Control Server** in the Ground Station software sta
 - **Database Factory**: Modular support for PostgreSQL (Production/Docker) and SQLite (Local testing).
 - **Modern UI**: Responsive "Mission Control" Dashboard built with Bootstrap 5.
 - **Dockerized**: Fully automated setup with Docker Compose.
+---
+### Interface
+
+<img width="1353" height="708" alt="Image" src="https://github.com/user-attachments/assets/ffa38923-a5ec-4196-827e-958fdf86ef7b" />
 
 ### 📂 Project Structure
 ```plaintext
