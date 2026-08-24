@@ -156,9 +156,9 @@ ORDER BY
 LIMIT 100;
 
 -- Permissões
-GRANT ALL PRIVILEGES ON DATABASE tc_generator TO root;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO root;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO root;
+GRANT ALL PRIVILEGES ON DATABASE tc_generator TO admin;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO admin;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO admin;
 
 -- Comentários para documentação
 COMMENT ON TABLE telecommands IS 'It stores the remote commands sent to the satellites.';
