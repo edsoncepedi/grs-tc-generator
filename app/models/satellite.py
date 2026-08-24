@@ -1,6 +1,6 @@
 # app/models/satellite.py
 from datetime import datetime, timezone, UTC
-from typing import List, Dict, Any, TYPE_CHECKING
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint
 from sqlalchemy import DateTime
@@ -18,6 +18,8 @@ from ..database.database_config import Base
 # Avoid circular imports
 if TYPE_CHECKING:
     from .telecommand import Telecommand
+    from .scheduled_pass import ScheduledPass
+    from .satellite_tracking_status import SatelliteTrackingStatus
 
 
 class Satellite(Base):
@@ -37,10 +39,33 @@ class Satellite(Base):
         server_default='active'
     )
 
+    # Orbital data. Optional: a satellite without either still accepts
+    # telecommands, but is skipped by the automatic scheduler — there is no way
+    # to predict passes for an orbit we don't know.
+    # norad_id is preferred (the TLE is fetched from CelesTrak and stays fresh);
+    # the TLE lines cover satellites outside the public catalogue, or pin a
+    # specific TLE for testing, and take precedence when set.
+    norad_id: Mapped[Optional[int]] = mapped_column(Integer, unique=True, nullable=True)
+    tle_line1: Mapped[Optional[str]] = mapped_column(String(69), nullable=True)
+    tle_line2: Mapped[Optional[str]] = mapped_column(String(69), nullable=True)
+
     # Relationships
     telecommands: Mapped[List["Telecommand"]] = relationship(
-        "Telecommand", 
+        "Telecommand",
         back_populates="satellite",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    scheduled_passes: Mapped[List["ScheduledPass"]] = relationship(
+        "ScheduledPass",
+        back_populates="satellite",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    tracking_status: Mapped[Optional["SatelliteTrackingStatus"]] = relationship(
+        "SatelliteTrackingStatus",
+        back_populates="satellite",
+        uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True
     )
@@ -59,9 +84,15 @@ class Satellite(Base):
             'code': self.code,
             'description': self.description,
             'status': self.status,
+            'norad_id': self.norad_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+
+    @property
+    def is_trackable(self) -> bool:
+        """Whether the scheduler can predict passes for this satellite."""
+        return self.norad_id is not None or bool(self.tle_line1 and self.tle_line2)
 
     def __repr__(self):
         return f'<Satellite {self.code}: {self.name}>'

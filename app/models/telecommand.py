@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .satellite import Satellite
     from .operator import Operator
     from .execution_log import ExecutionLog
+    from .scheduled_pass import ScheduledPass
 
 class Telecommand(Base):
     """Represents a telecommand that can be sent to a satellite."""
@@ -58,9 +59,20 @@ class Telecommand(Base):
         JSONB,
         nullable=True
     )
+    # Pass this command is scheduled to be transmitted on. SET NULL on delete
+    # because cancelling a pass must not delete the telecommand: it goes back
+    # to the queue and is rescheduled on the next planning cycle.
+    scheduled_pass_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey('scheduled_passes.id', ondelete='SET NULL'),
+        nullable=True
+    )
 
     # Relationships
     satellite: Mapped["Satellite"] = relationship("Satellite", back_populates="telecommands")
+    scheduled_pass: Mapped[Optional["ScheduledPass"]] = relationship(
+        "ScheduledPass", back_populates="telecommands"
+    )
     operator: Mapped[Optional["Operator"]] = relationship("Operator", back_populates="telecommands")
 
     # Use string literal for ExecutionLog to avoid circular import
@@ -121,7 +133,8 @@ class Telecommand(Base):
             'sent_at': format_datetime(self.sent_at),
             'confirmed_at': format_datetime(self.confirmed_at),
             'priority': self.priority,
-            'metadata': self.metadata_
+            'metadata': self.metadata_,
+            'scheduled_pass_id': self.scheduled_pass_id
         }
 
     def __repr__(self) -> str:

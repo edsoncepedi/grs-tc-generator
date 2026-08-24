@@ -2,6 +2,15 @@
 -- O banco de dados já foi criado pelo script script_init_db.py
 
 -- Criação da tabela de satélites
+--
+-- Os campos orbitais são opcionais: um satélite sem norad_id nem TLE continua
+-- servindo para cadastrar telecomandos, mas não entra no agendamento
+-- automático — não há como prever passagens de algo cuja órbita não se conhece.
+--
+-- norad_id é a fonte preferida (o TLE é buscado no CelesTrak e fica sempre
+-- atualizado); tle_line1/tle_line2 existem para satélites fora do catálogo
+-- público ou para fixar um TLE específico em testes, e têm precedência quando
+-- preenchidos.
 CREATE TABLE satellites (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -9,7 +18,10 @@ CREATE TABLE satellites (
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'maintenance'))
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'maintenance')),
+    norad_id INTEGER UNIQUE,
+    tle_line1 VARCHAR(69),
+    tle_line2 VARCHAR(69)
 );
 
 -- Criação da tabela de usuários/operadores
@@ -25,6 +37,61 @@ CREATE TABLE operators (
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'suspended'))
 );
 
+-- Criação da tabela de passagens agendadas
+--
+-- O plano produzido pelo TC Scheduler: quando cada satélite estará visível e
+-- qual dessas janelas a estação vai de fato usar. Fica no banco (e não só na
+-- memória do scheduler) para sobreviver a um restart e para que a interface
+-- consiga mostrar quando cada telecomando sai.
+--
+-- Uma janela é descartada como 'missed' se o AOS passar sem que a estação
+-- consiga assumir a passagem — o que distingue "não rastreamos" de
+-- "rastreamos e falhou".
+CREATE TABLE scheduled_passes (
+    id SERIAL PRIMARY KEY,
+    satellite_id INTEGER NOT NULL REFERENCES satellites(id) ON DELETE CASCADE,
+    aos_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    los_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    culmination_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    max_elevation_deg DOUBLE PRECISION NOT NULL,
+    aos_azimuth_deg DOUBLE PRECISION NOT NULL,
+    los_azimuth_deg DOUBLE PRECISION NOT NULL,
+    -- Epoch dos elementos orbitais usados: quanto mais velho, menos confiável
+    -- a previsão. Guardado para permitir auditar uma passagem que falhou.
+    tle_epoch TIMESTAMP WITH TIME ZONE,
+    data_source VARCHAR(10) CHECK (data_source IN ('omm', 'tle')),
+    status VARCHAR(20) NOT NULL DEFAULT 'planned'
+        CHECK (status IN ('planned', 'active', 'completed', 'missed', 'cancelled')),
+    status_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT valid_pass_window CHECK (los_time > aos_time)
+);
+
+-- Criação da tabela de posição corrente dos satélites
+--
+-- Uma linha por satélite, sobrescrita a cada ciclo de rastreamento (não é
+-- histórico). Responde "onde está cada satélite agora" sem que a interface
+-- precise saber propagar órbita.
+--
+-- status_message guarda o motivo quando o cálculo falha para um satélite
+-- específico (TLE ausente, erro de propagação, CelesTrak fora do ar sem
+-- cache), para que uma falha isolada fique visível em vez de virar silêncio.
+CREATE TABLE satellite_tracking_status (
+    satellite_id INTEGER PRIMARY KEY REFERENCES satellites(id) ON DELETE CASCADE,
+    latitude_deg DOUBLE PRECISION,
+    longitude_deg DOUBLE PRECISION,
+    altitude_km DOUBLE PRECISION,
+    azimuth_deg DOUBLE PRECISION,
+    elevation_deg DOUBLE PRECISION,
+    range_km DOUBLE PRECISION,
+    is_visible BOOLEAN NOT NULL DEFAULT FALSE,
+    tle_epoch TIMESTAMP WITH TIME ZONE,
+    data_source VARCHAR(10) CHECK (data_source IN ('omm', 'tle')),
+    status_message TEXT,
+    checked_at TIMESTAMP WITH TIME ZONE
+);
+
 -- Criação da tabela de telecomandos
 CREATE TABLE telecommands (
     id SERIAL PRIMARY KEY,
@@ -38,7 +105,11 @@ CREATE TABLE telecommands (
     sent_at TIMESTAMP WITH TIME ZONE,
     confirmed_at TIMESTAMP WITH TIME ZONE,
     priority INTEGER DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
-    metadata JSONB
+    metadata JSONB,
+    -- Passagem em que este comando vai ser transmitido. ON DELETE SET NULL
+    -- porque cancelar uma passagem não pode apagar o telecomando: ele volta
+    -- para a fila e é reagendado no ciclo seguinte.
+    scheduled_pass_id INTEGER REFERENCES scheduled_passes(id) ON DELETE SET NULL
 );
 
 -- Criação da tabela de logs de execução
@@ -57,7 +128,13 @@ CREATE INDEX idx_telecommands_satellite_id ON telecommands(satellite_id);
 CREATE INDEX idx_telecommands_status ON telecommands(status);
 CREATE INDEX idx_telecommands_created_at ON telecommands(created_at);
 CREATE INDEX idx_telecommands_operator_id ON telecommands(operator_id);
+CREATE INDEX idx_telecommands_scheduled_pass_id ON telecommands(scheduled_pass_id);
 CREATE INDEX idx_execution_logs_telecommand_id ON execution_logs(telecommand_id);
+-- O scheduler busca por status a cada ciclo, e por AOS para achar a próxima
+-- passagem a assumir.
+CREATE INDEX idx_scheduled_passes_status ON scheduled_passes(status);
+CREATE INDEX idx_scheduled_passes_aos_time ON scheduled_passes(aos_time);
+CREATE INDEX idx_scheduled_passes_satellite_id ON scheduled_passes(satellite_id);
 
 -- Função para atualizar o campo updated_at automaticamente
 CREATE OR REPLACE FUNCTION update_modified_column()
@@ -73,6 +150,10 @@ CREATE TRIGGER update_satellites_modtime
 BEFORE UPDATE ON satellites
 FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
+CREATE TRIGGER update_scheduled_passes_modtime
+BEFORE UPDATE ON scheduled_passes
+FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
 -- Inserção de dados de exemplo
 -- Senha: password123 (hash bcrypt)
 INSERT INTO operators (username, email, full_name, password_hash, role) VALUES
@@ -81,6 +162,13 @@ INSERT INTO operators (username, email, full_name, password_hash, role) VALUES
 ('operator2', 'operator2@tcgenerator.com', 'Operador 2', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'operator');
 
 -- Inserção de satélites de exemplo
+--
+-- norad_id fica NULL de propósito: um NORAD ID errado faria a estação apontar
+-- para outro objeto sem nenhum erro visível, o que é pior do que não apontar.
+-- Preencha com o identificador real de cada satélite antes de contar com o
+-- agendamento automático:
+--     UPDATE satellites SET norad_id = <id> WHERE code = 'SAT-001';
+-- Consulte em https://celestrak.org/satcat/search.php
 INSERT INTO satellites (name, code, description, status) VALUES
 ('FloripaSat-1', 'SAT-001', 'Satélite de pesquisa científica', 'active'),
 ('GOLDS-UFSC', 'SAT-COM-001', 'Satélite de comunicação geoestacionário', 'active'),
