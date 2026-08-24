@@ -8,11 +8,17 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/mission-control.css') }}">
     <style>
         /* Esta página rola: ao contrário do dashboard, a lista de satélites
-           cresce e o formulário fica abaixo dela. */
-        body { overflow: auto; }
+           cresce e o formulário fica abaixo dela. Por isso a altura precisa
+           acompanhar o conteúdo, e não ficar presa em 100vh como lá. */
+        body { overflow: auto; height: auto; min-height: 100vh; }
         .page { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
-        .panel { background: #1a1a2e; border: 1px solid #2a2a45; border-radius: 6px;
-                 padding: 1.25rem; margin-bottom: 1.5rem; }
+        /* display: block é obrigatório aqui. No mission-control.css `.panel` é
+           uma aba do dashboard e nasce `display: none`, esperando que o JS lhe
+           dê `.active`. Esta página não tem abas: nada nunca receberia
+           `.active`, e sem esta linha os três painéis (busca, cadastro e
+           lista) ficam invisíveis. */
+        .panel { display: block; background: #1a1a2e; border: 1px solid #2a2a45;
+                 border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem; }
         .panel h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: 0.5px;
                     color: #8a8aa0; margin-bottom: 1rem; font-weight: 600; }
         .lookup-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
