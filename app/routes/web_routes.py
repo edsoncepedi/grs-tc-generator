@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify
 from sqlalchemy import desc
 from sqlalchemy.exc import IntegrityError
@@ -5,7 +7,9 @@ import json
 from app.database.factories.database_manager import DatabaseManager
 from app.models.telecommand import Telecommand
 from app.models.satellite import Satellite
+from app.models.scheduled_pass import ScheduledPass
 from app.models.operator import Operator
+from app.services import celestrak
 
 web_bp = Blueprint('web', __name__)
 
@@ -152,6 +156,109 @@ def delete_telecommand(tc_id):
 
 # --- Satellite Routes ---
 
+def _clean_orbital_field(value):
+    """Empty form fields mean "not set", which in the database is NULL.
+
+    Storing '' instead would make norad_id fail its integer cast and would make
+    an empty TLE look like a manual TLE that the scheduler must prefer.
+    """
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _apply_orbital_data(satellite, data):
+    """Set norad_id / TLE lines from request data, validating against CelesTrak.
+
+    Returns a warning string when the ID could not be confirmed but was still
+    accepted, or None when there is nothing to report.
+
+    A NORAD ID that points at the wrong object never fails visibly — the station
+    just tracks something else — so it is checked against the same catalogue the
+    trajectory calculation uses. If CelesTrak itself is unreachable the value is
+    accepted with a warning: refusing to register satellites because an external
+    site is down would be worse than the risk of a typo.
+    """
+    warning = None
+
+    if 'norad_id' in data:
+        raw = _clean_orbital_field(data.get('norad_id'))
+        if raw is None:
+            satellite.norad_id = None
+        else:
+            try:
+                norad_id = int(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f'NORAD ID must be a number, got {raw!r}')
+
+            try:
+                entry = celestrak.lookup_by_norad_id(norad_id)
+            except celestrak.CelestrakUnavailable as error:
+                warning = (
+                    f'NORAD {norad_id} saved without confirmation: '
+                    f'CelesTrak is unreachable ({error})'
+                )
+            else:
+                if entry is None:
+                    raise ValueError(
+                        f'NORAD {norad_id} does not exist in the CelesTrak catalogue. '
+                        f'Search by name to find the right identifier.'
+                    )
+            satellite.norad_id = norad_id
+
+    if 'tle_line1' in data:
+        satellite.tle_line1 = _clean_orbital_field(data.get('tle_line1'))
+    if 'tle_line2' in data:
+        satellite.tle_line2 = _clean_orbital_field(data.get('tle_line2'))
+
+    if bool(satellite.tle_line1) != bool(satellite.tle_line2):
+        raise ValueError('A manual TLE needs both lines, or neither.')
+
+    return warning
+
+
+@web_bp.route('/satellites')
+def satellites_page():
+    """Satellite registry: orbital data, tracking state and upcoming passes."""
+    session = DatabaseManager.get_session()
+    try:
+        satellites = session.query(Satellite).order_by(Satellite.name).all()
+
+        now = datetime.now(timezone.utc)
+        next_passes = {}
+        for scheduled in (session.query(ScheduledPass)
+                          .filter(ScheduledPass.status.in_(['planned', 'active']))
+                          .filter(ScheduledPass.los_time >= now)
+                          .order_by(ScheduledPass.aos_time).all()):
+            next_passes.setdefault(scheduled.satellite_id, scheduled)
+
+        return render_template(
+            'satellites.html', satellites=satellites, next_passes=next_passes, now=now
+        )
+    finally:
+        session.close()
+
+
+@web_bp.route('/satellite/lookup')
+def satellite_lookup():
+    """Search the CelesTrak catalogue, so an operator never guesses a NORAD ID."""
+    query = (request.args.get('q') or '').strip()
+    if not query:
+        return jsonify({'success': False, 'error': 'Informe um nome ou NORAD ID'}), 400
+
+    try:
+        if query.isdigit():
+            entry = celestrak.lookup_by_norad_id(int(query))
+            results = [entry] if entry else []
+        else:
+            results = celestrak.search_by_name(query)
+    except celestrak.CelestrakUnavailable as error:
+        return jsonify({'success': False, 'error': f'CelesTrak indisponível: {error}'}), 503
+
+    return jsonify({'success': True, 'results': results})
+
+
 @web_bp.route('/satellite/create', methods=['POST'])
 def create_satellite():
     """Handle satellite creation via AJAX."""
@@ -167,14 +274,23 @@ def create_satellite():
             status=data['status'],
             description=data.get('description', '')
         )
-        
+        warning = _apply_orbital_data(new_sat, data)
+
         session.add(new_sat)
         session.commit()
-        return jsonify({'success': True, 'message': 'Satellite created successfully'})
-        
+        return jsonify({
+            'success': True, 'message': 'Satellite created successfully', 'warning': warning
+        })
+
+    except ValueError as e:
+        session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 400
     except IntegrityError:
         session.rollback()
-        return jsonify({'success': False, 'error': 'Satellite code must be unique.'}), 400
+        return jsonify({
+            'success': False,
+            'error': 'Satellite code and NORAD ID must be unique.'
+        }), 400
     except Exception as e:
         session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -189,20 +305,29 @@ def update_satellite(sat_id):
         sat = session.get(Satellite, sat_id)
         if not sat:
             return jsonify({'success': False, 'error': 'Satellite not found'}), 404
-            
+
         data = request.get_json()
-        
+
         if 'name' in data: sat.name = data['name']
         if 'code' in data: sat.code = data['code']
         if 'status' in data: sat.status = data['status']
         if 'description' in data: sat.description = data['description']
-        
+        warning = _apply_orbital_data(sat, data)
+
         session.commit()
-        return jsonify({'success': True, 'message': 'Satellite updated successfully'})
-        
+        return jsonify({
+            'success': True, 'message': 'Satellite updated successfully', 'warning': warning
+        })
+
+    except ValueError as e:
+        session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 400
     except IntegrityError:
         session.rollback()
-        return jsonify({'success': False, 'error': 'Satellite code must be unique.'}), 400
+        return jsonify({
+            'success': False,
+            'error': 'Satellite code and NORAD ID must be unique.'
+        }), 400
     except Exception as e:
         session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -226,5 +351,9 @@ def delete_satellite(sat_id):
         flash(f'Error deleting satellite: {str(e)}', 'danger')
     finally:
         session.close()
-        
+
+    # Back to wherever the delete was triggered from: the registry page lists
+    # satellites, the dashboard has them in the sidebar.
+    if request.referrer and url_for('web.satellites_page') in request.referrer:
+        return redirect(url_for('web.satellites_page'))
     return redirect(url_for('web.index'))

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpaceLab — Satellites</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/mission-control.css') }}">
+    <style>
+        /* Esta página rola: ao contrário do dashboard, a lista de satélites
+           cresce e o formulário fica abaixo dela. */
+        body { overflow: auto; }
+        .page { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+        .panel { background: #1a1a2e; border: 1px solid #2a2a45; border-radius: 6px;
+                 padding: 1.25rem; margin-bottom: 1.5rem; }
+        .panel h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: 0.5px;
+                    color: #8a8aa0; margin-bottom: 1rem; font-weight: 600; }
+        .lookup-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+        .lookup-row .form-control { flex: 1; }
+        .hint { color: #8a8aa0; font-size: 0.85rem; margin-top: 0.5rem; }
+        .result { display: flex; justify-content: space-between; align-items: center;
+                  padding: 0.6rem 0.75rem; border: 1px solid #2a2a45; border-radius: 4px;
+                  margin-bottom: 0.4rem; background: #14142a; }
+        .result code { color: #4dabf7; }
+        table.sats { width: 100%; border-collapse: collapse; }
+        table.sats th { text-align: left; padding: 0.6rem 0.5rem; font-size: 0.75rem;
+                        text-transform: uppercase; letter-spacing: 0.5px; color: #8a8aa0;
+                        border-bottom: 1px solid #2a2a45; }
+        table.sats td { padding: 0.7rem 0.5rem; border-bottom: 1px solid #22223a;
+                        font-size: 0.9rem; vertical-align: top; }
+        table.sats tr.clickable:hover { background: #1f1f38; cursor: pointer; }
+        .mono { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+                font-size: 0.85rem; }
+        .muted { color: #6a6a80; }
+        .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+        .form-group { margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="flash-messages">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+    </div>
+
+    <div class="header">
+        <h1>
+            <img src="https://raw.githubusercontent.com/spacelab-ufsc/grs-doc/main/img/logo-wide.png"
+                 alt="SpaceLab UFSC" style="height: 60px;"> Satellites
+        </h1>
+        <div class="header-actions">
+            <a href="{{ url_for('web.index') }}" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> Dashboard
+            </a>
+            <button class="btn btn-primary" onclick="newSatellite()">
+                <i class="bi bi-plus-lg"></i> New Satellite
+            </button>
+        </div>
+    </div>
+
+    <div class="page">
+        <!-- Busca no CelesTrak -->
+        <div class="panel">
+            <h2>1. Find the satellite in the CelesTrak catalogue</h2>
+            <div class="lookup-row">
+                <input type="text" id="lookupQuery" class="form-control"
+                       placeholder="Name (e.g. FLORIPASAT) or NORAD ID (e.g. 44885)"
+                       onkeydown="if (event.key === 'Enter') runLookup()">
+                <button class="btn btn-primary" onclick="runLookup()">
+                    <i class="bi bi-search"></i> Search
+                </button>
+            </div>
+            <div id="lookupResults"></div>
+            <div class="hint">
+                CelesTrak is the same catalogue the trajectory calculation reads. Picking the
+                satellite here instead of typing an ID is what keeps the station from tracking
+                the wrong object — a mistaken NORAD ID produces no error, just a wrong pointing.
+            </div>
+        </div>
+
+        <!-- Cadastro -->
+        <div class="panel">
+            <h2 id="formTitle">2. Register the satellite</h2>
+            <input type="hidden" id="satId" value="">
+
+            <div class="grid-2">
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" id="satName" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Code (unique)</label>
+                    <input type="text" id="satCode" class="form-control" required>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="form-group">
+                    <label class="form-label">NORAD ID</label>
+                    <input type="number" id="satNorad" class="form-control"
+                           placeholder="checked against CelesTrak when saving">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select id="satStatus" class="form-control">
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                        <option value="maintenance">Maintenance</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea id="satDescription" class="form-control" rows="2"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Manual TLE (optional)</label>
+                <input type="text" id="satTle1" class="form-control mono"
+                       placeholder="1 44885U 19093G   26236.47738817  ..." maxlength="69">
+                <input type="text" id="satTle2" class="form-control mono" style="margin-top: 0.4rem"
+                       placeholder="2 44885  97.7922 331.2358 0011361  ..." maxlength="69">
+                <div class="hint">
+                    Only for satellites outside the public catalogue, or to pin a specific TLE
+                    while testing. When both lines are filled they take precedence over the
+                    NORAD ID, and the elements stop being refreshed automatically.
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button class="btn btn-secondary" onclick="newSatellite()">Clear</button>
+                <button class="btn btn-danger" id="deleteBtn" style="display: none"
+                        onclick="deleteSatellite()">Delete</button>
+                <button class="btn btn-primary" onclick="saveSatellite()">Save</button>
+            </div>
+        </div>
+
+        <!-- Lista -->
+        <div class="panel">
+            <h2>Registered satellites</h2>
+            <table class="sats">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Code</th>
+                        <th>Status</th>
+                        <th>Orbital data</th>
+                        <th>Current position</th>
+                        <th>Next pass</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for sat in satellites %}
+                    <tr class="clickable" onclick='editSatellite({{ sat.to_dict()|tojson }},
+                        {{ (sat.tle_line1 or "")|tojson }}, {{ (sat.tle_line2 or "")|tojson }})'>
+                        <td>{{ sat.name }}</td>
+                        <td><span class="badge">{{ sat.code }}</span></td>
+                        <td>
+                            <span class="badge {{ 'success' if sat.status == 'active' else 'warning' }}">
+                                {{ sat.status }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if sat.tle_line1 and sat.tle_line2 %}
+                                <span class="badge success">manual TLE</span>
+                            {% elif sat.norad_id %}
+                                <span class="mono">NORAD {{ sat.norad_id }}</span>
+                            {% else %}
+                                <span class="muted">not trackable</span>
+                            {% endif %}
+                        </td>
+                        <td class="mono">
+                            {% set ts = sat.tracking_status %}
+                            {% if ts and ts.status_message %}
+                                <span class="muted" title="{{ ts.status_message }}">error</span>
+                            {% elif ts and ts.elevation_deg is not none %}
+                                az {{ '%.1f'|format(ts.azimuth_deg) }}
+                                el {{ '%.1f'|format(ts.elevation_deg) }}
+                                {% if ts.is_visible %}
+                                    <span class="badge success">visible</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="mono">
+                            {% set np = next_passes.get(sat.id) %}
+                            {% if np %}
+                                {{ np.aos_time.strftime('%d/%m %H:%M') }}
+                                <span class="muted">el {{ '%.0f'|format(np.max_elevation_deg) }}°</span>
+                            {% else %}
+                                <span class="muted">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="6" class="muted">No satellites registered yet.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            <div class="hint">
+                Position and next pass are filled in by the TC Scheduler. A satellite with no
+                orbital data is skipped by the automatic scheduling — it still accepts
+                telecommands, they just never get a pass.
+            </div>
+        </div>
+    </div>
+
+<script>
+function flash(message, kind) {
+    const box = document.querySelector('.flash-messages');
+    const el = document.createElement('div');
+    el.className = 'alert alert-' + kind;
+    el.textContent = message;
+    box.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
+}
+
+async function runLookup() {
+    const query = document.getElementById('lookupQuery').value.trim();
+    const box = document.getElementById('lookupResults');
+    if (!query) return;
+
+    box.innerHTML = '<div class="hint">Searching…</div>';
+    try {
+        const response = await fetch('/satellite/lookup?q=' + encodeURIComponent(query));
+        const data = await response.json();
+
+        if (!data.success) {
+            box.innerHTML = '<div class="hint">' + data.error + '</div>';
+            return;
+        }
+        if (!data.results.length) {
+            box.innerHTML = '<div class="hint">Nothing found. CelesTrak matches on the ' +
+                'catalogue name, which may differ from the name used locally.</div>';
+            return;
+        }
+
+        box.innerHTML = data.results.map(r => `
+            <div class="result">
+                <span>
+                    <code>NORAD ${r.norad_id}</code> &nbsp; <strong>${r.object_name}</strong>
+                    &nbsp; <span class="muted">${r.object_id || ''} · epoch ${(r.epoch || '').slice(0, 10)}</span>
+                </span>
+                <button class="btn btn-secondary"
+                        onclick="useResult(${r.norad_id}, ${JSON.stringify(r.object_name)})">Use</button>
+            </div>`).join('');
+    } catch (error) {
+        box.innerHTML = '<div class="hint">Lookup failed: ' + error + '</div>';
+    }
+}
+
+function useResult(noradId, objectName) {
+    document.getElementById('satNorad').value = noradId;
+    // Só preenche o nome se ainda estiver vazio: o nome local pode ser
+    // diferente do catálogo de propósito (FloripaSat-1 vs FLORIPASAT-1).
+    const name = document.getElementById('satName');
+    if (!name.value.trim()) name.value = objectName;
+    document.getElementById('formTitle').scrollIntoView({ behavior: 'smooth' });
+}
+
+function newSatellite() {
+    document.getElementById('satId').value = '';
+    ['satName', 'satCode', 'satNorad', 'satDescription', 'satTle1', 'satTle2']
+        .forEach(id => document.getElementById(id).value = '');
+    document.getElementById('satStatus').value = 'active';
+    document.getElementById('formTitle').textContent = '2. Register the satellite';
+    document.getElementById('deleteBtn').style.display = 'none';
+}
+
+function editSatellite(sat, tle1, tle2) {
+    document.getElementById('satId').value = sat.id;
+    document.getElementById('satName').value = sat.name || '';
+    document.getElementById('satCode').value = sat.code || '';
+    document.getElementById('satNorad').value = sat.norad_id || '';
+    document.getElementById('satStatus').value = sat.status || 'active';
+    document.getElementById('satDescription').value = sat.description || '';
+    document.getElementById('satTle1').value = tle1 || '';
+    document.getElementById('satTle2').value = tle2 || '';
+    document.getElementById('formTitle').textContent = 'Editing ' + sat.name;
+    document.getElementById('deleteBtn').style.display = '';
+    document.getElementById('formTitle').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function saveSatellite() {
+    const id = document.getElementById('satId').value;
+    const payload = {
+        name: document.getElementById('satName').value.trim(),
+        code: document.getElementById('satCode').value.trim(),
+        status: document.getElementById('satStatus').value,
+        description: document.getElementById('satDescription').value.trim(),
+        norad_id: document.getElementById('satNorad').value.trim(),
+        tle_line1: document.getElementById('satTle1').value.trim(),
+        tle_line2: document.getElementById('satTle2').value.trim(),
+    };
+
+    if (!payload.name || !payload.code) {
+        flash('Name and code are required.', 'danger');
+        return;
+    }
+
+    const url = id ? `/satellite/update/${id}` : '/satellite/create';
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            flash(data.error, 'danger');
+            return;
+        }
+        if (data.warning) flash(data.warning, 'warning');
+        location.reload();
+    } catch (error) {
+        flash('Save failed: ' + error, 'danger');
+    }
+}
+
+function deleteSatellite() {
+    const id = document.getElementById('satId').value;
+    if (!id) return;
+    if (!confirm('Delete this satellite? This also deletes its telecommands and passes.')) return;
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/satellite/delete/${id}`;
+    document.body.appendChild(form);
+    form.submit();
+}
+</script>
+</body>
+</html>
