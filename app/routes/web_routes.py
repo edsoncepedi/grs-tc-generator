@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify
-from sqlalchemy import desc
+from sqlalchemy import and_, desc, func
 from sqlalchemy.exc import IntegrityError
 import json
 from app.database.factories.database_manager import DatabaseManager
@@ -18,32 +18,48 @@ def index():
     """Render the main dashboard with telecommands grouped by status."""
     session = DatabaseManager.get_session()
     try:
-        # Fetch recent telecommands grouped by status
-        # We limit to 10 per category for performance/cleanliness
+        pending_filter = Telecommand.status.in_(['pending', 'queued'])
+        sent_filter = Telecommand.status == 'sent'
+        # The card says "24h", so the query has to mean it.
+        last_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+        history_filter = and_(
+            Telecommand.status.in_(['confirmed', 'failed']),
+            Telecommand.created_at >= last_24h,
+        )
+
+        # The lists are capped at 10 for a readable page, but the cards must
+        # count every row: taking len() of a capped list makes the counter
+        # silently stop at 10 once the queue grows past it.
+        counts = {
+            'pending': session.query(func.count(Telecommand.id)).filter(pending_filter).scalar(),
+            'sent': session.query(func.count(Telecommand.id)).filter(sent_filter).scalar(),
+            'history': session.query(func.count(Telecommand.id)).filter(history_filter).scalar(),
+        }
+
         pending_tcs = session.query(Telecommand)\
-            .filter(Telecommand.status.in_(['pending', 'queued']))\
+            .filter(pending_filter)\
             .order_by(desc(Telecommand.created_at))\
             .limit(10).all()
 
         sent_tcs = session.query(Telecommand)\
-            .filter(Telecommand.status == 'sent')\
+            .filter(sent_filter)\
             .order_by(desc(Telecommand.sent_at))\
             .limit(10).all()
 
-        # History: Confirmed or Failed
         history_tcs = session.query(Telecommand)\
-            .filter(Telecommand.status.in_(['confirmed', 'failed']))\
+            .filter(history_filter)\
             .order_by(desc(Telecommand.created_at))\
             .limit(10).all()
-            
+
         # Fetch all satellites (not just active) for the sidebar list
         satellites = session.query(Satellite).order_by(Satellite.name).all()
-        
+
         # Fetch operators (In a real app, this would be the logged-in user)
         operators = session.query(Operator).filter_by(status='active').all()
 
         return render_template(
             'index.html',
+            counts=counts,
             pending_tcs=pending_tcs,
             sent_tcs=sent_tcs,
             history_tcs=history_tcs,

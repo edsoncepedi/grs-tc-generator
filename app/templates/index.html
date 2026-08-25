@@ -77,17 +77,17 @@
                 <div class="stats-grid">
                     <div class="stat-card pending">
                         <div class="stat-label">Pending Commands</div>
-                        <div class="stat-value">{{ pending_tcs|length }}</div>
+                        <div class="stat-value">{{ counts.pending }}</div>
                         <i class="bi bi-hourglass-split stat-icon"></i>
                     </div>
                     <div class="stat-card sent">
                         <div class="stat-label">In Flight (Sent)</div>
-                        <div class="stat-value">{{ sent_tcs|length }}</div>
+                        <div class="stat-value">{{ counts.sent }}</div>
                         <i class="bi bi-send stat-icon"></i>
                     </div>
                     <div class="stat-card history">
                         <div class="stat-label">History (24h)</div>
-                        <div class="stat-value">{{ history_tcs|length }}</div>
+                        <div class="stat-value">{{ counts.history }}</div>
                         <i class="bi bi-archive stat-icon"></i>
                     </div>
                 </div>
